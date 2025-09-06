@@ -11,17 +11,19 @@ require_once '../config/database.php';
 // Ambil hasil AHP
 $ahpResults = [];
 $ahpAvailable = false;
+$consistencyRatio = 0;
 try {
     $stmt = $pdo->prepare("
-        SELECT criteria_name, weight, consistency_ratio 
-        FROM ahp_results 
-        WHERE user_id = ? 
-        ORDER BY created_at DESC 
+        SELECT c.name as criteria_name, ar.weight, ar.consistency_ratio
+        FROM ahp_results ar
+        JOIN criteria c ON ar.criteria_id = c.id
+        WHERE ar.created_by = ?
+        ORDER BY ar.created_at DESC
         LIMIT 4
     ");
     $stmt->execute([$_SESSION['user_id']]);
     $ahpData = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
+
     if (count($ahpData) >= 4) {
         $ahpAvailable = true;
         $consistencyRatio = $ahpData[0]['consistency_ratio'];
@@ -33,7 +35,7 @@ try {
     $ahpAvailable = false;
 }
 
-// Ambil hasil TOPSIS
+// Ambil hasil TOPSIS dari topsis_calculations atau topsis_results
 $topsisResults = [];
 $topsisAvailable = false;
 $totalCases = 0;
@@ -44,25 +46,98 @@ $avgUrgency = 0;
 $avgSpread = 0;
 
 try {
+    // Coba ambil dari topsis_calculations terlebih dahulu
     $stmt = $pdo->prepare("
-        SELECT * FROM topsis_results 
-        WHERE user_id = ? 
-        ORDER BY ranking ASC
+        SELECT
+            tc.rank_position as ranking,
+            tac.case_id as alternative_id,
+            tac.case_name as alternative_name,
+            tac.kerugian,
+            tac.korban,
+            tac.urgensi,
+            tac.penyebaran,
+            tc.closeness_coefficient
+        FROM topsis_calculations tc
+        LEFT JOIN topsis_analysis_cases tac ON tac.case_id = tc.case_id AND tac.created_by = tc.calculated_by
+        WHERE tc.calculated_by = ?
+        ORDER BY tc.rank_position ASC
     ");
     $stmt->execute([$_SESSION['user_id']]);
     $topsisResults = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
+
+    // Jika tidak ada di topsis_calculations, coba dari topsis_results
+    if (count($topsisResults) == 0) {
+        $stmt = $pdo->prepare("
+            SELECT * FROM topsis_results
+            WHERE user_id = ?
+            ORDER BY ranking ASC
+        ");
+        $stmt->execute([$_SESSION['user_id']]);
+        $topsisResults = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    // Debug: If still no results, try a simpler query without JOIN
+    if (count($topsisResults) == 0) {
+        $stmt = $pdo->prepare("
+            SELECT
+                rank_position as ranking,
+                case_id as alternative_id,
+                CONCAT('Case ', case_id) as alternative_name,
+                closeness_coefficient
+            FROM topsis_calculations
+            WHERE calculated_by = ?
+            ORDER BY rank_position ASC
+        ");
+        $stmt->execute([$_SESSION['user_id']]);
+        $simpleResults = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        if (count($simpleResults) > 0) {
+            $topsisResults = $simpleResults;
+        }
+    }
+
+    // Debug: Jika masih kosong, coba query tanpa JOIN untuk melihat apakah ada data
+    if (count($topsisResults) == 0) {
+        $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM topsis_calculations WHERE calculated_by = ?");
+        $stmt->execute([$_SESSION['user_id']]);
+        $calcCount = $stmt->fetch()['count'];
+
+        $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM topsis_analysis_cases WHERE created_by = ?");
+        $stmt->execute([$_SESSION['user_id']]);
+        $caseCount = $stmt->fetch()['count'];
+
+        // Jika ada data tapi query JOIN gagal, coba query sederhana
+        if ($calcCount > 0 && $caseCount > 0) {
+            $stmt = $pdo->prepare("
+                SELECT
+                    tc.rank_position as ranking,
+                    CONCAT('CASE_', tc.case_id) as alternative_id,
+                    CONCAT('Kasus ', tc.case_id) as alternative_name,
+                    0 as kerugian,
+                    0 as korban,
+                    0 as urgensi,
+                    0 as penyebaran,
+                    tc.closeness_coefficient
+                FROM topsis_calculations tc
+                WHERE tc.calculated_by = ?
+                ORDER BY tc.rank_position ASC
+            ");
+            $stmt->execute([$_SESSION['user_id']]);
+            $topsisResults = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+    }
+
     if (count($topsisResults) > 0) {
         $topsisAvailable = true;
         $totalCases = count($topsisResults);
-        
+
         // Hitung statistik
         foreach ($topsisResults as $result) {
-            $totalLoss += $result['kerugian'];
-            $totalVictims += $result['korban'];
-            $avgUrgency += $result['urgensi'];
-            $avgSpread += $result['penyebaran'];
-            
+            $totalLoss += isset($result['kerugian']) ? $result['kerugian'] : 0;
+            $totalVictims += isset($result['korban']) ? $result['korban'] : 0;
+            $avgUrgency += isset($result['urgensi']) ? $result['urgensi'] : 0;
+            $avgSpread += isset($result['penyebaran']) ? $result['penyebaran'] : 0;
+
             // Kategorikan prioritas berdasarkan ranking
             if ($result['ranking'] == 1) {
                 $priorityCount['high']++;
@@ -72,12 +147,14 @@ try {
                 $priorityCount['low']++;
             }
         }
-        
+
         $avgUrgency = $totalCases > 0 ? $avgUrgency / $totalCases : 0;
         $avgSpread = $totalCases > 0 ? $avgSpread / $totalCases : 0;
     }
 } catch (Exception $e) {
     $topsisAvailable = false;
+    // Debug: Uncomment untuk melihat error
+    // echo "<!-- Debug: " . $e->getMessage() . " -->";
 }
 
 include '../includes/header.php';
@@ -113,6 +190,54 @@ include '../includes/header.php';
                     <div class="alert alert-warning">
                         <h5><i class="fas fa-exclamation-triangle me-2"></i>Hasil Analisis Belum Tersedia</h5>
                         <p>Untuk melihat hasil analisis, Anda harus melakukan perhitungan AHP dan TOPSIS terlebih dahulu.</p>
+
+                        <!-- Debug Info (uncomment untuk troubleshooting) -->
+                        <?php
+                        echo "<div class='alert alert-info mt-3'>";
+                        echo "<h6>Debug Info:</h6>";
+                        echo "<p>User ID: " . $_SESSION['user_id'] . "</p>";
+                        echo "<p>User Role: " . $_SESSION['role'] . "</p>";
+                        try {
+                            $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM ahp_results WHERE created_by = ?");
+                            $stmt->execute([$_SESSION['user_id']]);
+                            echo "<p>AHP Results: " . $stmt->fetch()['count'] . "</p>";
+
+                            $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM topsis_calculations WHERE calculated_by = ?");
+                            $stmt->execute([$_SESSION['user_id']]);
+                            echo "<p>TOPSIS Calculations: " . $stmt->fetch()['count'] . "</p>";
+
+                            $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM topsis_analysis_cases WHERE created_by = ?");
+                            $stmt->execute([$_SESSION['user_id']]);
+                            echo "<p>TOPSIS Cases: " . $stmt->fetch()['count'] . "</p>";
+
+                            // Check if there are any TOPSIS calculations at all
+                            $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM topsis_calculations");
+                            $stmt->execute();
+                            echo "<p>Total TOPSIS Calculations: " . $stmt->fetch()['count'] . "</p>";
+
+                            // Check if there are any TOPSIS cases at all
+                            $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM topsis_analysis_cases");
+                            $stmt->execute();
+                            echo "<p>Total TOPSIS Cases: " . $stmt->fetch()['count'] . "</p>";
+
+                            // Check recent TOPSIS calculations
+                            $stmt = $pdo->prepare("SELECT * FROM topsis_calculations WHERE calculated_by = ? ORDER BY calculated_at DESC LIMIT 5");
+                            $stmt->execute([$_SESSION['user_id']]);
+                            $recentCalcs = $stmt->fetchAll(PDO::FETCH_ASSOC);
+                            echo "<p>Recent TOPSIS Calculations: " . count($recentCalcs) . "</p>";
+                            if (count($recentCalcs) > 0) {
+                                echo "<ul>";
+                                foreach ($recentCalcs as $calc) {
+                                    echo "<li>Case ID: " . $calc['case_id'] . ", Rank: " . $calc['rank_position'] . ", Score: " . $calc['closeness_coefficient'] . "</li>";
+                                }
+                                echo "</ul>";
+                            }
+                        } catch (Exception $e) {
+                            echo "<p>Database Error: " . $e->getMessage() . "</p>";
+                        }
+                        echo "</div>";
+                        ?>
+
                         <div class="btn-group">
                             <a href="ahp.php" class="btn btn-primary">
                                 <i class="fas fa-chart-line me-2"></i>Lakukan AHP

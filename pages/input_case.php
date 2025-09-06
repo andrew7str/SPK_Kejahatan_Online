@@ -7,10 +7,7 @@ if (!isset($_SESSION['user_id'])) {
 
 require_once '../config/database.php';
 
-$page_title = 'Input Kasus - Sistem Pendukung Keputusan';
-include '../includes/header.php';
-
-// Handle form submission
+// Handle form submission (PINDAHKAN KE ATAS SEBELUM OUTPUT APAPUN)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_case'])) {
     $case_number = $_POST['case_number'];
     $case_name = $_POST['case_name'];
@@ -26,7 +23,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_case'])) {
     $assigned_officer = $_POST['assigned_officer'];
     $priority_level = $_POST['priority_level'];
     
+    $created_by = $_SESSION['user_id'] ?? null;
     try {
+        $stmt = $pdo->prepare("SELECT id FROM users WHERE id = ?");
+        $stmt->execute([$created_by]);
+        if ($stmt->rowCount() == 0) {
+            $created_by = null; // Jika tidak valid, set ke NULL
+        }
+
         $stmt = $pdo->prepare("
             INSERT INTO cases (
                 case_number, case_name, case_type, description, reporter_name, reporter_contact,
@@ -38,7 +42,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_case'])) {
         $stmt->execute([
             $case_number, $case_name, $case_type, $description, $reporter_name, $reporter_contact,
             $incident_date, $estimated_loss, $victim_count, $urgency_level, $spread_potential,
-            $assigned_officer, $priority_level, $_SESSION['user_id']
+            $assigned_officer, $priority_level, $created_by
         ]);
         
         $_SESSION['success'] = "Kasus berhasil ditambahkan dengan nomor: " . $case_number;
@@ -48,6 +52,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_case'])) {
         $_SESSION['error'] = "Gagal menambahkan kasus: " . $e->getMessage();
     }
 }
+
+$page_title = 'Input Kasus - Sistem Pendukung Keputusan';
+include '../includes/header.php';
 
 // Generate nomor kasus otomatis
 $current_year = date('Y');

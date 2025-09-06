@@ -7,8 +7,26 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit();
 }
 
+if (!isset($_SESSION['user_id'])) {
+    header('Location: ../index.php');
+    exit();
+}
+
+// Verifikasi user exists di database
+try {
+    $stmt = $pdo->prepare("SELECT id FROM users WHERE id = ? AND status = 'active'");
+    $stmt->execute([$_SESSION['user_id']]);
+    if ($stmt->rowCount() == 0) {
+        throw new Exception("User tidak ditemukan atau tidak aktif");
+    }
+} catch (Exception $e) {
+    $_SESSION['error'] = 'Error: ' . $e->getMessage();
+    header('Location: pages/ahp.php');
+    exit();
+}
+
 class AHP {
-    private $criteria = ['C1', 'C2', 'C3', 'C4']; // Kerugian, Korban, Urgensi, Penyebaran
+    private $criteria = ['C1', 'C2', 'C3', 'C4']; // Kerugian, Dampak, Urgensi Penanganan, Sumber Daya
     private $matrix = [];
     private $weights = [];
     private $consistencyRatio = 0;
@@ -137,24 +155,38 @@ try {
     
     // Simpan hasil ke database
     try {
-        // Hapus hasil AHP sebelumnya
-        $stmt = $pdo->prepare("DELETE FROM ahp_results WHERE user_id = ?");
+        // Ambil criteria dari database
+        $stmt = $pdo->prepare("SELECT id, name FROM criteria WHERE is_active = TRUE ORDER BY id LIMIT 4");
+        $stmt->execute();
+        $criteriaList = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        if (count($criteriaList) < 4) {
+            throw new Exception("Kriteria belum lengkap di database");
+        }
+
+        // Generate session_id
+        $session_id = 'ahp_' . $_SESSION['user_id'] . '_' . time();
+
+        // Hapus hasil AHP sebelumnya untuk user ini
+        $stmt = $pdo->prepare("DELETE FROM ahp_results WHERE created_by = ?");
         $stmt->execute([$_SESSION['user_id']]);
-        
+
         // Simpan hasil baru
         $stmt = $pdo->prepare("
-            INSERT INTO ahp_results (user_id, criteria_name, weight, consistency_ratio, created_at) 
-            VALUES (?, ?, ?, ?, NOW())
+            INSERT INTO ahp_results (session_id, criteria_id, weight, consistency_ratio, is_consistent, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, NOW())
         ");
-        
-        $criteriaNames = ['Tingkat Kerugian', 'Jumlah Korban', 'Urgensi', 'Potensi Penyebaran'];
-        
+
+        $isConsistent = $ahp->isConsistent() ? 1 : 0;
+
         for ($i = 0; $i < 4; $i++) {
             $stmt->execute([
-                $_SESSION['user_id'],
-                $criteriaNames[$i],
+                $session_id,
+                $criteriaList[$i]['id'],
                 $weights[$i],
-                $cr
+                $cr,
+                $isConsistent,
+                $_SESSION['user_id']
             ]);
         }
         
@@ -179,46 +211,79 @@ try {
         }
         
     } catch (PDOException $e) {
-        // Jika tabel belum ada, buat tabel
+        // Jika tabel belum ada atau error foreign key, buat tabel dengan struktur yang benar
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS ahp_results (
                 id INT AUTO_INCREMENT PRIMARY KEY,
-                user_id INT NOT NULL,
-                criteria_name VARCHAR(100) NOT NULL,
-                weight DECIMAL(10,8) NOT NULL,
-                consistency_ratio DECIMAL(10,8) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                session_id VARCHAR(100) NOT NULL,
+                criteria_id INT NOT NULL,
+                weight DECIMAL(8,6) NOT NULL,
+                consistency_ratio DECIMAL(8,6),
+                is_consistent BOOLEAN DEFAULT FALSE,
+                created_by INT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (criteria_id) REFERENCES criteria(id) ON DELETE CASCADE,
+                FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
             )
         ");
-        
+
         $pdo->exec("
             CREATE TABLE IF NOT EXISTS ahp_matrix (
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 user_id INT NOT NULL,
                 row_criteria INT NOT NULL,
                 col_criteria INT NOT NULL,
-                value DECIMAL(10,8) NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                value DECIMAL(8,6) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             )
         ");
-        
-        // Coba simpan lagi
-        $stmt = $pdo->prepare("
-            INSERT INTO ahp_results (user_id, criteria_name, weight, consistency_ratio, created_at) 
-            VALUES (?, ?, ?, ?, NOW())
-        ");
-        
-        for ($i = 0; $i < 4; $i++) {
-            $stmt->execute([
-                $_SESSION['user_id'],
-                $criteriaNames[$i],
-                $weights[$i],
-                $cr
-            ]);
+
+        // Pastikan criteria ada
+        $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM criteria WHERE is_active = TRUE");
+        $stmt->execute();
+        $criteriaCount = $stmt->fetch()['count'];
+
+        if ($criteriaCount < 4) {
+            // Insert default criteria jika belum ada
+            $pdo->exec("
+                INSERT IGNORE INTO criteria (code, name, description, type, weight, is_active) VALUES
+                ('C1', 'Tingkat Kerugian', 'Besarnya kerugian materiil (uang/barang) yang dialami korban akibat kasus kejahatan online', 'benefit', 0.5748, TRUE),
+                ('C2', 'Tingkat Dampak', 'Sejauh mana kasus berdampak pada masyarakat/instansi (keresahan publik, reputasi)', 'benefit', 0.2352, TRUE),
+                ('C3', 'Urgensi Penanganan', 'Tingkat kepentingan atau seberapa cepat kasus harus segera ditangani', 'benefit', 0.1262, TRUE),
+                ('C4', 'Ketersediaan Sumber Daya', 'Kesiapan personel, teknologi, dan fasilitas untuk menangani kasus', 'benefit', 0.0638, TRUE)
+            ");
+        }
+
+        // Ambil criteria lagi
+        $stmt = $pdo->prepare("SELECT id, name FROM criteria WHERE is_active = TRUE ORDER BY id LIMIT 4");
+        $stmt->execute();
+        $criteriaList = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        if (count($criteriaList) >= 4) {
+            // Simpan hasil baru
+            $stmt = $pdo->prepare("
+                INSERT INTO ahp_results (session_id, criteria_id, weight, consistency_ratio, is_consistent, created_by, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, NOW())
+            ");
+
+            $isConsistent = $ahp->isConsistent() ? 1 : 0;
+
+            for ($i = 0; $i < 4; $i++) {
+                $stmt->execute([
+                    $session_id,
+                    $criteriaList[$i]['id'],
+                    $weights[$i],
+                    $cr,
+                    $isConsistent,
+                    $_SESSION['user_id']
+                ]);
+            }
         }
     }
     
     // Prepare response
+    $criteriaNames = array_column($criteriaList, 'name');
     $response = [
         'success' => true,
         'weights' => $weights,

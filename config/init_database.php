@@ -102,7 +102,7 @@ try {
             victim_count INT DEFAULT 1,
             urgency_level INT DEFAULT 1 CHECK (urgency_level BETWEEN 1 AND 5),
             spread_potential INT DEFAULT 1 CHECK (spread_potential BETWEEN 1 AND 5),
-            created_by INT,
+            created_by INT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL

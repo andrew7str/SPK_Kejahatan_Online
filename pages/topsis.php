@@ -44,13 +44,38 @@ include '../includes/header.php';
             <!-- Check AHP Results First -->
             <?php
             $ahpAvailable = false;
+            $ahpSource = 'default';
             try {
-                $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM ahp_results WHERE user_id = ?");
+                // Check if user has their own AHP results
+                $stmt = $pdo->prepare("SELECT COUNT(*) as count FROM ahp_results WHERE created_by = ?");
                 $stmt->execute([$_SESSION['user_id']]);
-                $ahpCount = $stmt->fetch()['count'];
-                $ahpAvailable = ($ahpCount >= 4);
+                $userAhpCount = $stmt->fetch()['count'];
+
+                if ($userAhpCount >= 4) {
+                    $ahpAvailable = true;
+                    $ahpSource = 'user';
+                } else {
+                    // Check if admin has AHP results
+                    $stmt = $pdo->prepare("
+                        SELECT COUNT(*) as count
+                        FROM ahp_results ar
+                        JOIN users u ON ar.created_by = u.id
+                        WHERE u.role = 'admin'
+                    ");
+                    $stmt->execute();
+                    $adminAhpCount = $stmt->fetch()['count'];
+
+                    if ($adminAhpCount >= 4) {
+                        $ahpAvailable = true;
+                        $ahpSource = 'admin';
+                    } else {
+                        $ahpAvailable = true; // Default weights available
+                        $ahpSource = 'default';
+                    }
+                }
             } catch (Exception $e) {
-                $ahpAvailable = false;
+                $ahpAvailable = true; // Default weights always available
+                $ahpSource = 'default';
             }
             ?>
 
@@ -67,6 +92,27 @@ include '../includes/header.php';
                 </div>
             </div>
             <?php else: ?>
+
+            <!-- AHP Status Info -->
+            <div class="row mb-3">
+                <div class="col-12">
+                    <div class="alert alert-info">
+                        <h6><i class="fas fa-info-circle me-2"></i>Status Bobot Kriteria:</h6>
+                        <p class="mb-0">
+                            <?php if ($ahpSource === 'user'): ?>
+                                <i class="fas fa-user-check text-success me-2"></i>
+                                Menggunakan bobot AHP hasil perhitungan Anda sendiri
+                            <?php elseif ($ahpSource === 'admin'): ?>
+                                <i class="fas fa-user-shield text-primary me-2"></i>
+                                Menggunakan bobot AHP dari Administrator
+                            <?php else: ?>
+                                <i class="fas fa-calculator text-warning me-2"></i>
+                                Menggunakan bobot default berdasarkan skripsi (<?php echo $_SESSION['role'] === 'admin' ? 'Anda dapat melakukan AHP untuk bobot kustom' : 'Admin dapat melakukan AHP untuk bobot kustom'; ?>)
+                            <?php endif; ?>
+                        </p>
+                    </div>
+                </div>
+            </div>
 
             <!-- Input Alternatif -->
             <div class="row">
@@ -98,16 +144,16 @@ include '../includes/header.php';
                                         <div class="form-text">Masukkan nilai kerugian dalam Rupiah</div>
                                     </div>
                                     <div class="col-md-3">
-                                        <label for="dampak" class="form-label">Tingkat Dampak (1-5)</label>
-                                        <select class="form-select" id="dampak" required>
+                                        <label for="korban" class="form-label">Jumlah Korban (1-5)</label>
+                                        <select class="form-select" id="korban" required>
                                             <option value="">Pilih</option>
-                                            <option value="1">1 - Sangat Rendah</option>
-                                            <option value="2">2 - Rendah</option>
+                                            <option value="1">1 - Sangat Sedikit</option>
+                                            <option value="2">2 - Sedikit</option>
                                             <option value="3">3 - Sedang</option>
-                                            <option value="4">4 - Tinggi</option>
-                                            <option value="5">5 - Sangat Tinggi</option>
+                                            <option value="4">4 - Banyak</option>
+                                            <option value="5">5 - Sangat Banyak</option>
                                         </select>
-                                        <div class="form-text">Tingkat dampak terhadap korban</div>
+                                        <div class="form-text">Jumlah korban yang terdampak</div>
                                     </div>
                                     <div class="col-md-3">
                                         <label for="urgensi" class="form-label">Urgensi (1-5)</label>
@@ -163,66 +209,39 @@ include '../includes/header.php';
                                             <th>ID Kasus</th>
                                             <th>Nama Kasus</th>
                                             <th>Kerugian (Rp)</th>
-                                            <th>Tingkat Dampak</th>
+                                            <th>Jumlah Korban</th>
                                             <th>Urgensi</th>
                                             <th>Penyebaran</th>
                                             <th>Aksi</th>
                                         </tr>
                                     </thead>
                                     <tbody id="casesTableBody">
-                                        <!-- Sample data -->
-                                        <tr>
-                                            <td>KJO-2025-001</td>
-                                            <td>Penipuan Online Marketplace</td>
-                                            <td>Rp 49,944,304</td>
-                                            <td>3</td>
-                                            <td>4</td>
-                                            <td>3</td>
-                                            <td>
-                                                <button class="btn btn-sm btn-danger" onclick="removeCase(this)">
-                                                    <i class="fas fa-trash"></i>
-                                                </button>
-                                            </td>
-                                        </tr>
-                                        <tr>
-                                            <td>KJO-2025-002</td>
-                                            <td>Investasi Bodong Online</td>
-                                            <td>Rp 55,000,000</td>
-                                            <td>4</td>
-                                            <td>5</td>
-                                            <td>3</td>
-                                            <td>
-                                                <button class="btn btn-sm btn-danger" onclick="removeCase(this)">
-                                                    <i class="fas fa-trash"></i>
-                                                </button>
-                                            </td>
-                                        </tr>
-                                        <tr>
-                                            <td>KJO-2025-003</td>
-                                            <td>Phishing Banking</td>
-                                            <td>Rp 63,000,000</td>
-                                            <td>3</td>
-                                            <td>3</td>
-                                            <td>2</td>
-                                            <td>
-                                                <button class="btn btn-sm btn-danger" onclick="removeCase(this)">
-                                                    <i class="fas fa-trash"></i>
-                                                </button>
-                                            </td>
-                                        </tr>
+                                        <!-- Data will be loaded dynamically -->
                                     </tbody>
                                 </table>
                             </div>
 
                             <div class="mt-3">
-                                <button type="button" class="btn btn-info btn-lg me-2" onclick="loadRestaurantData()">
-                                    <i class="fas fa-utensils me-2"></i>
-                                    Muat Data Restoran
-                                </button>
-                                <button type="button" class="btn btn-primary btn-lg" id="calculateTOPSISBtn" onclick="calculateTOPSIS()">
-                                    <i class="fas fa-calculator me-2"></i>
-                                    Hitung TOPSIS
-                                </button>
+                                <div class="alert alert-info">
+                                    <i class="fas fa-info-circle me-2"></i>
+                                    <strong>Status Data:</strong> <span id="casesStatus">0 kasus siap untuk disimpan</span>
+                                </div>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <button type="button" class="btn btn-success btn-lg" id="saveCasesBtn" onclick="saveCases()">
+                                            <i class="fas fa-save me-2"></i>
+                                            Simpan Data Kasus
+                                        </button>
+                                        <small class="text-muted d-block mt-1">Simpan data kasus ke database tanpa perhitungan</small>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <button type="button" class="btn btn-primary btn-lg" id="calculateTOPSISBtn" onclick="calculateTOPSIS()">
+                                            <i class="fas fa-calculator me-2"></i>
+                                            Hitung TOPSIS
+                                        </button>
+                                        <small class="text-muted d-block mt-1">Jalankan perhitungan TOPSIS dengan data tersimpan</small>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -295,41 +314,231 @@ if (isset($_SESSION['topsis_results'])) {
 ?>
 
 <script>
-let casesData = [
-    {
-        id: 'KJO-2025-001',
-        name: 'Penipuan Online Marketplace',
-        kerugian: 49944304,
-        dampak: 3,
-        urgensi: 4,
-        penyebaran: 3
-    },
-    {
-        id: 'KJO-2025-002',
-        name: 'Investasi Bodong Online',
-        kerugian: 55000000,
-        dampak: 4,
-        urgensi: 5,
-        penyebaran: 3
-    },
-    {
-        id: 'KJO-2025-003',
-        name: 'Phishing Banking',
-        kerugian: 63000000,
-        dampak: 3,
-        urgensi: 3,
-        penyebaran: 2
-    }
-];
+let casesData = [];
 
-// Add new case
-document.getElementById('topsisForm')?.addEventListener('submit', function(e) {
+// Load cases from database
+function loadCasesFromDatabase() {
+    fetch('../save_topsis_cases.php?action=load')
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                console.error('Error loading cases:', data.error);
+                // Use default sample data if database load fails
+                casesData = [
+                    {
+                        id: 'KJO-2025-001',
+                        name: 'Penipuan Online Marketplace',
+                        kerugian: 49944304,
+                        korban: 3,
+                        urgensi: 4,
+                        penyebaran: 3
+                    },
+                    {
+                        id: 'KJO-2025-002',
+                        name: 'Investasi Bodong Online',
+                        kerugian: 55000000,
+                        korban: 4,
+                        urgensi: 5,
+                        penyebaran: 3
+                    },
+                    {
+                        id: 'KJO-2025-003',
+                        name: 'Phishing Banking',
+                        kerugian: 63000000,
+                        korban: 3,
+                        urgensi: 3,
+                        penyebaran: 2
+                    }
+                ];
+            } else {
+                casesData = data.length > 0 ? data : [
+                    {
+                        id: 'KJO-2025-001',
+                        name: 'Penipuan Online Marketplace',
+                        kerugian: 49944304,
+                        korban: 3,
+                        urgensi: 4,
+                        penyebaran: 3
+                    },
+                    {
+                        id: 'KJO-2025-002',
+                        name: 'Investasi Bodong Online',
+                        kerugian: 55000000,
+                        korban: 4,
+                        urgensi: 5,
+                        penyebaran: 3
+                    },
+                    {
+                        id: 'KJO-2025-003',
+                        name: 'Phishing Banking',
+                        kerugian: 63000000,
+                        korban: 3,
+                        urgensi: 3,
+                        penyebaran: 2
+                    }
+                ];
+            }
+            initializeTable();
+        })
+        .catch(error => {
+            console.error('Error loading cases:', error);
+            // Use default sample data if fetch fails
+            casesData = [
+                {
+                    id: 'KJO-2025-001',
+                    name: 'Penipuan Online Marketplace',
+                    kerugian: 49944304,
+                    korban: 3,
+                    urgensi: 4,
+                    penyebaran: 3
+                },
+                {
+                    id: 'KJO-2025-002',
+                    name: 'Investasi Bodong Online',
+                    kerugian: 55000000,
+                    korban: 4,
+                    urgensi: 5,
+                    penyebaran: 3
+                },
+                {
+                    id: 'KJO-2025-003',
+                    name: 'Phishing Banking',
+                    kerugian: 63000000,
+                    korban: 3,
+                    urgensi: 3,
+                    penyebaran: 2
+                }
+            ];
+            initializeTable();
+        });
+}
+
+
+
+// Remove case
+function removeCase(button, caseId) {
+    if (confirm('Apakah Anda yakin ingin menghapus kasus ini?')) {
+        // Remove from data array
+        casesData = casesData.filter(c => c.id !== caseId);
+
+        // Save to database
+        saveCasesToDatabase();
+
+        // Remove from table
+        button.closest('tr').remove();
+
+        // Update status
+        updateCasesStatus();
+
+        showNotification('Kasus berhasil dihapus!', 'warning');
+    }
+}
+
+// Save cases to database
+function saveCasesToDatabase() {
+    fetch('save_topsis_cases.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'cases=' + encodeURIComponent(JSON.stringify(casesData))
+    })
+    .then(response => response.text())
+    .then(data => {
+        if (data === 'success') {
+            console.log('Cases saved to database successfully');
+        } else {
+            console.error('Error saving cases:', data);
+        }
+    })
+    .catch(error => {
+        console.error('Error saving cases:', error);
+    });
+}
+
+// Load cases from session
+function loadCasesFromSession() {
+    // Cases are loaded from PHP session at page load
+    // This function can be used for dynamic loading if needed
+}
+
+// Edit case
+function editCase(caseId) {
+    const caseData = casesData.find(c => c.id === caseId);
+    if (!caseData) return;
+
+    // Populate form with case data
+    document.getElementById('caseId').value = caseData.id;
+    document.getElementById('caseName').value = caseData.name;
+    document.getElementById('kerugian').value = caseData.kerugian;
+    document.getElementById('korban').value = caseData.korban;
+    document.getElementById('urgensi').value = caseData.urgensi;
+    document.getElementById('penyebaran').value = caseData.penyebaran;
+
+    // Change form submit behavior to update
+    const form = document.getElementById('topsisForm');
+    const submitBtn = form.querySelector('button[type="submit"]');
+    const originalText = submitBtn.innerHTML;
+    submitBtn.innerHTML = '<i class="fas fa-save me-2"></i>Update Kasus';
+
+    // Remove existing event listener and add update listener
+    form.removeEventListener('submit', addCaseHandler);
+    form.addEventListener('submit', function updateHandler(e) {
+        e.preventDefault();
+
+        const updatedCase = {
+            id: document.getElementById('caseId').value,
+            name: document.getElementById('caseName').value,
+            kerugian: parseInt(document.getElementById('kerugian').value),
+            korban: parseInt(document.getElementById('korban').value),
+            urgensi: parseInt(document.getElementById('urgensi').value),
+            penyebaran: parseInt(document.getElementById('penyebaran').value)
+        };
+
+        // Update in data array
+        const index = casesData.findIndex(c => c.id === caseId);
+        if (index !== -1) {
+            casesData[index] = updatedCase;
+        }
+
+        // Save to database
+        saveCasesToDatabase();
+
+        // Update table row
+        const row = document.querySelector(`tr[data-case-id="${caseId}"]`);
+        if (row) {
+            row.cells[0].textContent = updatedCase.id;
+            row.cells[1].textContent = updatedCase.name;
+            row.cells[2].textContent = 'Rp ' + updatedCase.kerugian.toLocaleString('id-ID');
+            row.cells[3].textContent = updatedCase.korban;
+            row.cells[4].textContent = updatedCase.urgensi;
+            row.cells[5].textContent = updatedCase.penyebaran;
+            row.setAttribute('data-case-id', updatedCase.id);
+        }
+
+        // Update status
+        updateCasesStatus();
+
+        // Reset form
+        form.reset();
+        submitBtn.innerHTML = originalText;
+
+        // Remove update handler and restore add handler
+        form.removeEventListener('submit', updateHandler);
+        form.addEventListener('submit', addCaseHandler);
+
+        showNotification('Kasus berhasil diupdate!', 'success');
+    });
+}
+
+// Store the original add handler
+const addCaseHandler = function(e) {
     e.preventDefault();
 
     const caseId = document.getElementById('caseId').value;
     const caseName = document.getElementById('caseName').value;
     const kerugian = parseInt(document.getElementById('kerugian').value);
-    const dampak = parseInt(document.getElementById('dampak').value);
+    const korban = parseInt(document.getElementById('korban').value);
     const urgensi = parseInt(document.getElementById('urgensi').value);
     const penyebaran = parseInt(document.getElementById('penyebaran').value);
 
@@ -344,12 +553,15 @@ document.getElementById('topsisForm')?.addEventListener('submit', function(e) {
         id: caseId,
         name: caseName,
         kerugian: kerugian,
-        dampak: dampak,
+        korban: korban,
         urgensi: urgensi,
         penyebaran: penyebaran
     };
 
     casesData.push(newCase);
+
+    // Save to database
+    saveCasesToDatabase();
 
     // Add to table
     const tbody = document.getElementById('casesTableBody');
@@ -362,6 +574,9 @@ document.getElementById('topsisForm')?.addEventListener('submit', function(e) {
             <td>${urgensi}</td>
             <td>${penyebaran}</td>
             <td>
+                <button class="btn btn-sm btn-warning me-1" onclick="editCase('${caseId}')">
+                    <i class="fas fa-edit"></i>
+                </button>
                 <button class="btn btn-sm btn-danger" onclick="removeCase(this, '${caseId}')">
                     <i class="fas fa-trash"></i>
                 </button>
@@ -372,89 +587,68 @@ document.getElementById('topsisForm')?.addEventListener('submit', function(e) {
     tbody.innerHTML += newRow;
     this.reset();
 
+    // Update status
+    updateCasesStatus();
+
     // Show success message
     showNotification('Kasus berhasil ditambahkan!', 'success');
-});
+};
 
-// Remove case
-function removeCase(button, caseId) {
-    if (confirm('Apakah Anda yakin ingin menghapus kasus ini?')) {
-        // Remove from data array
-        casesData = casesData.filter(c => c.id !== caseId);
 
-        // Remove from table
-        button.closest('tr').remove();
-        showNotification('Kasus berhasil dihapus!', 'warning');
+
+// Save cases to database
+function saveCases() {
+    if (casesData.length === 0) {
+        alert('Tidak ada data kasus untuk disimpan!');
+        return;
     }
-}
 
-// Load restaurant data function
-function loadRestaurantData() {
-    if (confirm('Apakah Anda ingin memuat data restoran contoh? Data kasus yang ada akan diganti.')) {
-        // Sample restaurant data
-        const restaurantData = [
-            {
-                id: 'RST-001',
-                name: 'Warung Makan Padang',
-                kerugian: 25000000,
-                dampak: 4,
-                urgensi: 4,
-                penyebaran: 3
-            },
-            {
-                id: 'RST-002',
-                name: 'Restoran Cepat Saji',
-                kerugian: 45000000,
-                dampak: 5,
-                urgensi: 5,
-                penyebaran: 4
-            },
-            {
-                id: 'RST-003',
-                name: 'Kafe Modern',
-                kerugian: 18000000,
-                dampak: 3,
-                urgensi: 3,
-                penyebaran: 2
-            },
-            {
-                id: 'RST-004',
-                name: 'Restoran Fine Dining',
-                kerugian: 75000000,
-                dampak: 4,
-                urgensi: 4,
-                penyebaran: 3
-            }
-        ];
+    // Show loading
+    const btn = document.getElementById('saveCasesBtn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Menyimpan...';
+    btn.disabled = true;
 
-        // Update cases data
-        casesData = restaurantData;
-
-        // Update table
-        const tbody = document.getElementById('casesTableBody');
-        tbody.innerHTML = '';
-
-        restaurantData.forEach(restaurant => {
-            const row = `
-                <tr data-case-id="${restaurant.id}">
-                    <td>${restaurant.id}</td>
-                    <td>${restaurant.name}</td>
-                    <td>Rp ${restaurant.kerugian.toLocaleString('id-ID')}</td>
-                    <td>${restaurant.dampak}</td>
-                    <td>${restaurant.urgensi}</td>
-                    <td>${restaurant.penyebaran}</td>
-                    <td>
-                        <button class="btn btn-sm btn-danger" onclick="removeCase(this, '${restaurant.id}')">
-                            <i class="fas fa-trash"></i>
-                        </button>
-                    </td>
-                </tr>
-            `;
-            tbody.innerHTML += row;
-        });
-
-        showNotification('Data restoran berhasil dimuat!', 'success');
-    }
+    // Send cases data to save_topsis_cases.php
+    console.log('Sending cases data:', casesData);
+    fetch('../save_topsis_cases.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'cases=' + encodeURIComponent(JSON.stringify(casesData))
+    })
+    .then(response => {
+        console.log('Response status:', response.status);
+        return response.text();
+    })
+    .then(data => {
+        console.log('Response data:', data);
+        if (data === 'success') {
+            showNotification('Data kasus berhasil disimpan ke database!', 'success');
+            // Update save button to show success state
+            btn.innerHTML = '<i class="fas fa-check me-2"></i>Tersimpan';
+            btn.classList.remove('btn-success');
+            btn.classList.add('btn-outline-success');
+            setTimeout(() => {
+                btn.innerHTML = '<i class="fas fa-save me-2"></i>Simpan Data Kasus';
+                btn.classList.remove('btn-outline-success');
+                btn.classList.add('btn-success');
+            }, 3000);
+        } else {
+            console.error('Error saving cases:', data);
+            showNotification('Gagal menyimpan data kasus: ' + data, 'danger');
+        }
+    })
+    .catch(error => {
+        console.error('Error saving cases:', error);
+        showNotification('Terjadi kesalahan saat menyimpan data!', 'danger');
+    })
+    .finally(() => {
+        // Reset button
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    });
 }
 
 // Calculate TOPSIS
@@ -470,13 +664,13 @@ function calculateTOPSIS() {
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Menghitung...';
     btn.disabled = true;
 
-    // Send data to backend using fetch
+    // Send request to backend (no need to send data since it's loaded from database)
     fetch('../process_topsis.php', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: 'alternatives=' + encodeURIComponent(JSON.stringify(casesData))
+        body: '' // Empty body since data comes from database
     })
     .then(response => response.text())
     .then(data => {
@@ -547,6 +741,62 @@ function showNotification(message, type = 'info') {
         }
     }, 5000);
 }
+
+// Update cases status display
+function updateCasesStatus() {
+    const statusElement = document.getElementById('casesStatus');
+    const count = casesData.length;
+    if (count === 0) {
+        statusElement.textContent = '0 kasus siap untuk disimpan';
+        statusElement.className = 'text-muted';
+    } else if (count === 1) {
+        statusElement.textContent = '1 kasus siap untuk disimpan (minimal 2 kasus untuk TOPSIS)';
+        statusElement.className = 'text-warning';
+    } else {
+        statusElement.textContent = `${count} kasus siap untuk disimpan dan dihitung`;
+        statusElement.className = 'text-success';
+    }
+}
+
+// Initialize table with cases data
+function initializeTable() {
+    const tbody = document.getElementById('casesTableBody');
+    tbody.innerHTML = '';
+
+    casesData.forEach(caseItem => {
+        const row = `
+            <tr data-case-id="${caseItem.id}">
+                <td>${caseItem.id}</td>
+                <td>${caseItem.name}</td>
+                <td>Rp ${caseItem.kerugian.toLocaleString('id-ID')}</td>
+                <td>${caseItem.korban}</td>
+                <td>${caseItem.urgensi}</td>
+                <td>${caseItem.penyebaran}</td>
+                <td>
+                    <button class="btn btn-sm btn-warning me-1" onclick="editCase('${caseItem.id}')">
+                        <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="btn btn-sm btn-danger" onclick="removeCase(this, '${caseItem.id}')">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </td>
+            </tr>
+        `;
+        tbody.innerHTML += row;
+    });
+
+    updateCasesStatus();
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadCasesFromDatabase();
+
+    const form = document.getElementById('topsisForm');
+    if (form) {
+        form.addEventListener('submit', addCaseHandler);
+    }
+});
 
 // Format currency input
 document.getElementById('kerugian')?.addEventListener('input', function(e) {

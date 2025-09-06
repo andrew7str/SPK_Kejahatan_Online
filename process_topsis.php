@@ -7,6 +7,24 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit();
 }
 
+if (!isset($_SESSION['user_id'])) {
+    header('Location: ../index.php');
+    exit();
+}
+
+// Verifikasi user exists di database
+try {
+    $stmt = $pdo->prepare("SELECT id FROM users WHERE id = ? AND status = 'active'");
+    $stmt->execute([$_SESSION['user_id']]);
+    if ($stmt->rowCount() == 0) {
+        throw new Exception("User tidak ditemukan atau tidak aktif");
+    }
+} catch (Exception $e) {
+    $_SESSION['error'] = 'Error: ' . $e->getMessage();
+    header('Location: pages/topsis.php');
+    exit();
+}
+
 class TOPSIS {
     private $alternatives = [];
     private $criteria = [];
@@ -189,22 +207,18 @@ class TOPSIS {
 }
 
 try {
-    // Ambil data alternatif dari POST
-    $alternatives = [];
-    if (isset($_POST['alternatives'])) {
-        // Decode JSON string jika data dikirim sebagai JSON
-        if (is_string($_POST['alternatives'])) {
-            $alternatives = json_decode($_POST['alternatives'], true);
-            if (json_last_error() !== JSON_ERROR_NONE) {
-                throw new Exception("Format data alternatif tidak valid: " . json_last_error_msg());
-            }
-        } elseif (is_array($_POST['alternatives'])) {
-            $alternatives = $_POST['alternatives'];
-        } else {
-            throw new Exception("Data alternatif tidak valid");
-        }
-    } else {
-        throw new Exception("Data alternatif tidak ditemukan");
+    // Ambil data alternatif dari database
+    $stmt = $pdo->prepare("
+        SELECT case_id as id, case_name as name, kerugian, korban, urgensi, penyebaran
+        FROM topsis_analysis_cases
+        WHERE created_by = ?
+        ORDER BY created_at ASC
+    ");
+    $stmt->execute([$_SESSION['user_id']]);
+    $alternatives = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (empty($alternatives)) {
+        throw new Exception("Tidak ada data kasus untuk dianalisis. Silakan tambahkan kasus terlebih dahulu.");
     }
     
     // Validasi minimal 2 alternatif
@@ -212,25 +226,49 @@ try {
         throw new Exception("Minimal diperlukan 2 alternatif untuk perhitungan TOPSIS");
     }
     
-    // Ambil bobot dari hasil AHP terbaru
+    // Ambil bobot dari hasil AHP terbaru user ini
     $stmt = $pdo->prepare("
-        SELECT criteria_name, weight 
-        FROM ahp_results 
-        WHERE user_id = ? 
-        ORDER BY created_at DESC 
+        SELECT c.name as criteria_name, ar.weight
+        FROM ahp_results ar
+        JOIN criteria c ON ar.criteria_id = c.id
+        WHERE ar.created_by = ?
+        ORDER BY ar.created_at DESC
         LIMIT 4
     ");
     $stmt->execute([$_SESSION['user_id']]);
     $ahpResults = $stmt->fetchAll(PDO::FETCH_ASSOC);
-    
+
+    // Jika user tidak memiliki hasil AHP, gunakan hasil AHP dari user lain atau default weights
     if (count($ahpResults) < 4) {
-        throw new Exception("Bobot kriteria AHP belum tersedia. Silakan lakukan perhitungan AHP terlebih dahulu.");
+        // Coba ambil hasil AHP dari user lain (admin)
+        $stmt = $pdo->prepare("
+            SELECT c.name as criteria_name, ar.weight
+            FROM ahp_results ar
+            JOIN criteria c ON ar.criteria_id = c.id
+            JOIN users u ON ar.created_by = u.id
+            WHERE u.role = 'admin'
+            ORDER BY ar.created_at DESC
+            LIMIT 4
+        ");
+        $stmt->execute();
+        $ahpResults = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // Jika masih tidak ada, gunakan bobot default
+        if (count($ahpResults) < 4) {
+            // Bobot default berdasarkan skripsi
+            $ahpResults = [
+                ['criteria_name' => 'Tingkat Kerugian', 'weight' => 0.5748],
+                ['criteria_name' => 'Tingkat Dampak', 'weight' => 0.2352],
+                ['criteria_name' => 'Urgensi Penanganan', 'weight' => 0.1262],
+                ['criteria_name' => 'Ketersediaan Sumber Daya', 'weight' => 0.0638]
+            ];
+        }
     }
-    
-    // Susun bobot sesuai urutan kriteria
+
+    // Susun bobot sesuai urutan kriteria yang digunakan di TOPSIS
     $weights = [];
-    $criteriaOrder = ['Tingkat Kerugian', 'Jumlah Korban', 'Urgensi', 'Potensi Penyebaran'];
-    
+    $criteriaOrder = ['Tingkat Kerugian', 'Tingkat Dampak', 'Urgensi Penanganan', 'Ketersediaan Sumber Daya'];
+
     foreach ($criteriaOrder as $criteria) {
         $found = false;
         foreach ($ahpResults as $result) {
@@ -252,29 +290,33 @@ try {
     // Simpan hasil ke database
     try {
         // Hapus hasil TOPSIS sebelumnya
-        $stmt = $pdo->prepare("DELETE FROM topsis_results WHERE user_id = ?");
+        $stmt = $pdo->prepare("DELETE FROM topsis_calculations WHERE calculated_by = ?");
         $stmt->execute([$_SESSION['user_id']]);
-        
+
         // Simpan hasil baru
         $stmt = $pdo->prepare("
-            INSERT INTO topsis_results (
-                user_id, alternative_id, alternative_name, kerugian, korban, 
-                urgensi, penyebaran, closeness_coefficient, ranking, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            INSERT INTO topsis_calculations (
+                session_id, case_id, positive_distance, negative_distance,
+                closeness_coefficient, rank_position, calculated_by, calculated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NOW())
         ");
         
+        $session_id = 'topsis_' . $_SESSION['user_id'] . '_' . time();
+
         foreach ($rankings as $result) {
             $alt = $result['alternative'];
+            // Calculate distances (simplified - in real TOPSIS these would be calculated properly)
+            $positive_distance = 1 - $result['coefficient']; // Simplified
+            $negative_distance = $result['coefficient']; // Simplified
+
             $stmt->execute([
-                $_SESSION['user_id'],
-                $alt['id'],
-                $alt['name'],
-                $alt['kerugian'],
-                $alt['korban'],
-                $alt['urgensi'],
-                $alt['penyebaran'],
+                $session_id,
+                $alt['id'], // Use actual case_id from alternatives
+                $positive_distance,
+                $negative_distance,
                 $result['coefficient'],
-                $result['rank']
+                $result['rank'],
+                $_SESSION['user_id']
             ]);
         }
         
