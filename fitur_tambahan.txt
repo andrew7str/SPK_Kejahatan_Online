@@ -1,0 +1,40 @@
+Dashboard (admin)
+1. Statistik Umum Kasus
+- Jumlah kasus online yang terdaftar.
+- Kasus per kategori (misalnya: penipuan online, pencemaran nama baik, hacking, dll).
+- Status kasus (baru, dalam proses, selesai).
+
+2. Visualisasi Data
+-Grafik batang / pie chart distribusi jenis kasus.
+-Tren kasus per bulan/tahun (line chart).
+-Proporsi prioritas kasus (tinggi, sedang, rendah).
+
+3. Hasil Perhitungan SPK (AHP & TOPSIS)
+- Tabel prioritas kasus dengan nilai skor TOPSIS (jarak ideal positif & negatif).
+- Urutan ranking kasus (misalnya: Kasus A = Prioritas 1, Kasus B = Prioritas 2).
+- Indikator warna (🚨 merah untuk prioritas tinggi, 🟡 kuning sedang, 🟢 hijau rendah).
+
+4. Ringkasan Kriteria & Bobot (AHP)
+- Daftar kriteria yang digunakan (misalnya: tingkat kerugian, jumlah korban, kompleksitas, urgensi).
+- Bobot hasil uji konsistensi AHP (dalam bentuk tabel atau donut chart).
+
+5. Notifikasi / Highlight
+- Kasus terbaru yang masuk.
+- Kasus dengan prioritas tertinggi hari ini/minggu ini.
+
+6. Menu Navigasi Cepat
+- Input data kasus baru.
+- Laporan hasil SPK (AHP & TOPSIS).
+
+
+Data kriteria & bobot.
+Manajemen pengguna (admin/anggota).
+
+Tampilan Utama Dashboard (contoh layout)
+Header → Judul sistem (SPK Prioritas Kasus Online – Polsek Saribudolok).
+
+Kiri (Sidebar Menu) → Navigasi (Kasus, Kriteria, Perhitungan, Laporan, Pengguna).
+
+Tengah → Ringkasan grafik (dasboard admin dan anggota) (statistik kasus, distribusi jenis kasus, prioritas kasus).
+
+Kanan → Notifikasi kasus terbaru & daftar prioritas hasil SPK.
